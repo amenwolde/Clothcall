@@ -1,0 +1,27 @@
+package com.clothcall.utils
+
+/**
+ * In-memory bridge between QuickScanScreen and CallUIScreen.
+ * Lives only for the duration of one scan session.
+ */
+object ScanResultHolder {
+    var response: String = ""
+    var caregiverName: String? = null
+    var fadeThreshold: Int? = null
+
+    // Accumulates messages for follow-up Claude requests (role → content)
+    val conversationHistory: MutableList<Pair<String, String>> = mutableListOf()
+
+    // Base64 images kept for multi-turn context
+    var base64Image: String = ""
+    var baselineBase64: String? = null
+
+    fun reset() {
+        response = ""
+        caregiverName = null
+        fadeThreshold = null
+        conversationHistory.clear()
+        base64Image = ""
+        baselineBase64 = null
+    }
+}

@@ -1,0 +1,77 @@
+package com.clothcall.utils
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.media.AudioManager
+import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.Locale
+import kotlin.coroutines.resume
+
+class AudioRouter(private val context: Context) {
+
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    suspend fun initTts(): Boolean = suspendCancellableCoroutine { cont ->
+        tts = TextToSpeech(context) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS
+            if (ttsReady) tts?.language = Locale.US
+            cont.resume(ttsReady)
+        }
+        cont.invokeOnCancellation { tts?.shutdown() }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun routeToEarpiece() {
+        audioManager.mode = AudioManager.MODE_IN_CALL
+        audioManager.isSpeakerphoneOn = false
+    }
+
+    fun routeToSpeaker() {
+        audioManager.mode = AudioManager.MODE_NORMAL
+        audioManager.isSpeakerphoneOn = true
+    }
+
+    fun resetRouting() {
+        audioManager.mode = AudioManager.MODE_NORMAL
+        audioManager.isSpeakerphoneOn = false
+    }
+
+    suspend fun speak(text: String, id: String = "cc_utt"): Boolean =
+        suspendCancellableCoroutine { cont ->
+            val engine = tts
+            if (!ttsReady || engine == null) { cont.resume(false); return@suspendCancellableCoroutine }
+
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == id) cont.resume(true)
+                }
+                @Deprecated("Deprecated in API level 21")
+                override fun onError(utteranceId: String?) {
+                    if (utteranceId == id) cont.resume(false)
+                }
+                override fun onError(utteranceId: String?, errorCode: Int) {
+                    if (utteranceId == id) cont.resume(false)
+                }
+            })
+
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), id)
+            cont.invokeOnCancellation { engine.stop() }
+        }
+
+    fun stop() {
+        tts?.stop()
+    }
+
+    fun shutdown() {
+        resetRouting()
+        tts?.shutdown()
+        tts = null
+        ttsReady = false
+    }
+}
