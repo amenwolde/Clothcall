@@ -30,9 +30,11 @@ Rules you must follow without exception:
 - For fading, compare directly to the baseline using soft language: "appears slightly lighter than the baseline photo", "colour drift is visible around the shoulder area compared to the reference"
 - If a trusted person's name and threshold are provided: their threshold is a private number used only for your own internal comparison — never speak it aloud, in any form ("twenty percent", "20%", "a threshold of 20", "this is at 15 percent" are all forbidden). Always refer to them by their actual name. Never call them "your trusted person", "the trusted person", or any label — only ever use the name given.
   Frame all fading judgements in their voice, as though reporting their personal opinion about this specific garment. Lead with a short visual observation of the fading (per the soft-language rule above — where it sits, how it compares to the baseline), then immediately follow with their opinion in the same sentence, using only these qualitative buckets for the opinion half:
-  - Fading clearly below their threshold → "...— [Name] would still consider this fine to wear" or "...— this is well within what [Name] would accept for this type of garment"
-  - Fading approaching their threshold → "...— [Name] might still consider this fine to wear, though it's getting close to what they'd call borderline"
-  - Fading at or beyond their threshold → "...— [Name] would consider this not wearable" or "...— this has passed the point where [Name] would still wear it"
+  - Fading clearly below their threshold → "...— in terms of fading, [Name] would still consider this fine" or "...— as far as the fading goes, this is well within what [Name] would accept for this type of garment"
+  - Fading approaching their threshold → "...— in terms of fading, [Name] might still consider this fine, though it's getting close to what they'd call borderline"
+  - Fading at or beyond their threshold → "...— in terms of fading, [Name] would consider this not wearable" or "...— as far as the fading goes, this has passed the point where [Name] would still wear it"
+  Always anchor the verdict explicitly to fading ("in terms of fading...", "as far as the fading goes...") — never phrase it as a bare, unqualified "fine to wear"/"not wearable" judgement on the garment as a whole, since that would wrongly read as overriding or dismissing any separately-reported stains or marks.
+- The qualitative-bucket opinion language above applies ONLY to fading judgements against their threshold — never reuse it, or any "fine to wear" verdict, when describing stains, marks, or damage. Stains have no calibrated threshold, so describe them neutrally (location, size, severity) without attributing an opinion to the trusted person.
 - If no trusted person name is provided, do not mention any trusted person at all and do not invent or assume a name
 - If confidence is low due to lighting or angle, note it as a passive observation only ("lighting limits precision here", "angle reduces detail visibility") — never suggest the user adjust position, hold the phone, or take another photo
 - Maximum length: 3 sentences total plus the final question
@@ -90,10 +92,11 @@ Rules you must follow without exception:
 - Assess fading based on the garment's current visible appearance — describe overall colour saturation and visible wear
 - If a trusted person's name and fade threshold are provided: their threshold is a private number used only for your own internal comparison — never speak it aloud, in any form ("twenty percent", "20%", "a threshold of 20", "this is at 15 percent" are all forbidden). Always refer to them by their actual name. Never call them "your trusted person", "the trusted person", or any label — only ever use the name given.
   Frame all fading judgements in their voice, as though reporting their personal opinion about this specific garment. Lead with a short visual observation of the fading (per the rule above — overall colour saturation, visible wear, location), then immediately follow with their opinion in the same sentence, using only these qualitative buckets for the opinion half:
-  - Fading clearly below their threshold → "...— [Name] would still consider this fine to wear" or "...— this is well within what [Name] would accept for this type of garment"
-  - Fading approaching their threshold → "...— [Name] might still consider this fine to wear, though it's getting close to what they'd call borderline"
-  - Fading at or beyond their threshold → "...— [Name] would consider this not wearable" or "...— this has passed the point where [Name] would still wear it"
-- If a trusted person's name is provided, reference them by name when describing stains as well
+  - Fading clearly below their threshold → "...— in terms of fading, [Name] would still consider this fine" or "...— as far as the fading goes, this is well within what [Name] would accept for this type of garment"
+  - Fading approaching their threshold → "...— in terms of fading, [Name] might still consider this fine, though it's getting close to what they'd call borderline"
+  - Fading at or beyond their threshold → "...— in terms of fading, [Name] would consider this not wearable" or "...— as far as the fading goes, this has passed the point where [Name] would still wear it"
+  Always anchor the verdict explicitly to fading ("in terms of fading...", "as far as the fading goes...") — never phrase it as a bare, unqualified "fine to wear"/"not wearable" judgement on the garment as a whole, since that would wrongly read as overriding or dismissing any separately-reported stains or marks.
+- The qualitative-bucket opinion language above applies ONLY to fading judgements against their threshold — never reuse it, or any "fine to wear" verdict, when describing stains, marks, or damage. Stains have no calibrated threshold, so describe them neutrally (location, size, severity) without attributing an opinion to the trusted person.
 - If no trusted person name is provided, do not mention any trusted person at all and do not invent or assume a name
 - If nothing is found, say: "No visible marks, stains, or fading were detected on this garment. Do you still want to wear it?"
 - If confidence is low due to lighting or angle, note it as a passive observation only ("lighting limits precision here", "angle reduces detail visibility") — never suggest the user adjust position, hold the phone, or take another photo
@@ -355,6 +358,13 @@ class GeminiApiService {
             val finishReason = choices.getJSONObject(0).optString("finish_reason")
             throw Exception("Groq response had empty content (finish_reason: $finishReason)")
         }
-        return content
+        return sanitizeModelText(content)
     }
+
+    // Llama-family models occasionally leak raw chat-template control tokens
+    // (e.g. "<|start_header_id|>assistant<|end_header_id|>") into the content
+    // field, especially on multi-turn requests that replay history. TTS would
+    // otherwise read these aloud verbatim — strip them before they reach the user.
+    private fun sanitizeModelText(text: String): String =
+        text.replace(Regex("<\\|[^|]*\\|>"), "").trim()
 }
