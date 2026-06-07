@@ -18,6 +18,7 @@ sealed class CallPhase {
     object Speaking : CallPhase()
     object Listening : CallPhase()
     object FetchingDetail : CallPhase()
+    data class Clarifying(val message: String) : CallPhase()
     data class Dismissed(val warm: Boolean) : CallPhase()
     data class Error(val msg: String) : CallPhase()
 }
@@ -47,44 +48,43 @@ class CallViewModel(
     fun onTtsDone() { _phase.value = CallPhase.Listening }
 
     fun handleVoiceCommand(words: String) {
-        val lower = words.lowercase()
-        when {
-            // Decline — checked first so "no, what about the stain" doesn't accidentally dismiss
-            "no" in lower || "i'll change" in lower ->
-                _phase.value = CallPhase.Dismissed(warm = false)
+        val trimmed = words.trim()
+        if (trimmed.length < 2) {
+            _phase.value = CallPhase.Clarifying(CLARIFY_MESSAGE)
+            return
+        }
+        viewModelScope.launch {
+            val intent = apiService.classifyIntent(
+                apiKey = prefs.apiKey,
+                rawText = trimmed,
+                currentResponse = ScanResultHolder.response
+            ).getOrNull()?.trim()?.lowercase()
 
-            // Detail / follow-up questions — checked before "yes" so "okay what about fading"
-            // routes here rather than dismissing as a yes
-            "more" in lower || "detail" in lower ||
-                "fade" in lower || "fading" in lower ||
-                "stain" in lower || "what about" in lower || "how about" in lower ||
-                "tell me" in lower || "is it" in lower || "can i" in lower ||
-                "is the" in lower || "what's" in lower || "explain" in lower ->
-                fetchMoreDetail(words)
+            when (intent) {
+                "yes" -> _phase.value = CallPhase.Dismissed(warm = true)
 
-            // Repeat
-            "again" in lower || "repeat" in lower ->
-                transitionToSpeaking()
+                "no" -> _phase.value = CallPhase.Dismissed(warm = false)
 
-            // Already know — suppress this finding from future scans
-            "already know" in lower || "already" in lower -> {
-                val firstSentence = ScanResultHolder.response
-                    .split(Regex("(?<=[.!?])\\s+"))
-                    .firstOrNull()
-                    ?.trim()
-                    .orEmpty()
-                if (firstSentence.isNotBlank()) {
-                    ScanResultHolder.reportedStains.add(firstSentence.take(60).trim())
+                "repeat" -> transitionToSpeaking()
+
+                "already_know" -> {
+                    val firstSentence = ScanResultHolder.response
+                        .split(Regex("(?<=[.!?])\\s+"))
+                        .firstOrNull()
+                        ?.trim()
+                        .orEmpty()
+                    if (firstSentence.isNotBlank()) {
+                        ScanResultHolder.reportedStains.add(firstSentence.take(60).trim())
+                    }
+                    _phase.value = CallPhase.Dismissed(warm = true)
                 }
-                _phase.value = CallPhase.Dismissed(warm = true)
+
+                "more_detail" -> fetchMoreDetail(trimmed)
+
+                "question" -> handleFollowUpQuestion(trimmed)
+
+                else -> _phase.value = CallPhase.Clarifying(CLARIFY_MESSAGE)
             }
-
-            // Yes / wear it — last so detail-question phrases get priority above
-            "yes" in lower || "i'll wear" in lower || "wear it" in lower ||
-                "okay" in lower || "fine" in lower || "sure" in lower || "go ahead" in lower ->
-                _phase.value = CallPhase.Dismissed(warm = true)
-
-            else -> retryListening()
         }
     }
 
@@ -127,12 +127,37 @@ class CallViewModel(
         }
     }
 
+    private fun handleFollowUpQuestion(questionText: String) {
+        _phase.value = CallPhase.FetchingDetail
+        viewModelScope.launch {
+            val result = apiService.requestMoreDetail(
+                apiKey = prefs.apiKey,
+                base64Image = ScanResultHolder.base64Image,
+                baselineBase64 = ScanResultHolder.baselineBase64,
+                followUpText = questionText,
+                firstResponseText = ScanResultHolder.response,
+                caregiverName = ScanResultHolder.caregiverName,
+                fadeThreshold = ScanResultHolder.fadeThreshold
+            )
+            result.onSuccess { text ->
+                ScanResultHolder.response = text
+                ScanResultHolder.conversationHistory.add("user" to questionText)
+                ScanResultHolder.conversationHistory.add("assistant" to text)
+                transitionToSpeaking()
+            }.onFailure { e ->
+                _phase.value = CallPhase.Error(e.message ?: "Network error")
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         audioRouter.resetRouting()
     }
 
     companion object {
+        private const val CLARIFY_MESSAGE = "Sorry, I did not catch that. Say yes, no, or ask me anything."
+
         fun factory(api: GeminiApiService, prefs: PreferencesManager): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {

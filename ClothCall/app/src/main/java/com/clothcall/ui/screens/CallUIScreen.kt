@@ -159,13 +159,20 @@ fun CallUIScreen(
         }
     }
 
+    // Clarifying → speak the "didn't catch that" prompt, then reopen the mic
+    LaunchedEffect(phase, ttsReady) {
+        if (phase is CallPhase.Clarifying && ttsReady) {
+            speakText(tts!!, (phase as CallPhase.Clarifying).message) { viewModel.retryListening() }
+        }
+    }
+
     // Dismissed / Error → navigate away
     LaunchedEffect(phase) {
         when (phase) {
             is CallPhase.Dismissed -> {
-                if ((phase as CallPhase.Dismissed).warm) {
-                    tts?.speak("Enjoy your day.", TextToSpeech.QUEUE_FLUSH, Bundle(), "bye")
-                }
+                val dismissed = phase as CallPhase.Dismissed
+                val byeMessage = if (dismissed.warm) "Enjoy your day." else "Okay, take your time."
+                tts?.speak(byeMessage, TextToSpeech.QUEUE_FLUSH, Bundle(), "bye")
                 if (isOutMode) TelecomHelper.endCall()
                 delay(1_800)
                 navController.navigate(Route.HOME) { popUpTo(Route.CALL_UI) { inclusive = true } }

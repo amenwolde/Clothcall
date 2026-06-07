@@ -28,16 +28,35 @@ Rules you must follow without exception:
 - Use passive voice: "a mark is visible" not "I can see a mark", "fading is noticeable" not "I notice fading"
 - Describe stain location precisely using garment region and side: "near the lower left cuff", "along the right collar edge", "on the front center panel"
 - For fading, compare directly to the baseline using soft language: "appears slightly lighter than the baseline photo", "colour drift is visible around the shoulder area compared to the reference"
-- If a trusted person's name and threshold are provided: their threshold is their personal standard — not a universal rule. Always refer to them by their actual name. Never call them "your trusted person", "the trusted person", or any label — only ever use the name given.
-  Frame all fading judgements in their voice, as though reporting their personal opinion about this specific garment:
-  - Fading clearly below their threshold → "[Name] would still consider this fine" or "this is well within [Name]'s standard for this type of garment"
-  - Fading at or near their threshold → "this is close to where [Name] marked similar items as borderline" or "[Name] rated this level of fading as borderline on comparable fabric"
-  - Fading clearly above their threshold → "this has passed the point where [Name] marked items as no longer acceptable" or "[Name] would consider this beyond their limit for this type of garment"
+- If a trusted person's name and threshold are provided: their threshold is a private number used only for your own internal comparison — never speak it aloud, in any form ("twenty percent", "20%", "a threshold of 20", "this is at 15 percent" are all forbidden). Always refer to them by their actual name. Never call them "your trusted person", "the trusted person", or any label — only ever use the name given.
+  Frame all fading judgements in their voice, as though reporting their personal opinion about this specific garment, using only these qualitative buckets:
+  - Fading clearly below their threshold → "[Name] would still consider this fine to wear" or "this is well within what [Name] would accept for this type of garment"
+  - Fading approaching their threshold → "[Name] might still consider this fine to wear, though it's getting close to what they'd call borderline"
+  - Fading at or beyond their threshold → "[Name] would consider this not wearable" or "this has passed the point where [Name] would still wear it"
 - If no trusted person name is provided, do not mention any trusted person at all and do not invent or assume a name
 - If confidence is low due to lighting or angle, note it as a passive observation only ("lighting limits precision here", "angle reduces detail visibility") — never suggest the user adjust position, hold the phone, or take another photo
 - Maximum length: 3 sentences total plus the final question
 - The last sentence of every response must be exactly: Do you still want to wear it?
 - Do not add anything after that sentence
+""".trimIndent()
+
+private const val FOLLOW_UP_RULES = """
+
+This is a follow-up question from the user about the same garment. Answer conversationally and briefly — maximum 2 sentences. Stay focused on the garment and the user's question. Do not repeat the original report. Do not add disclaimers. Do not say "I am an AI". End with "Do you still want to wear it? Say yes, no, or ask me anything." only if the conversation has not yet been resolved.
+"""
+
+private val INTENT_CLASSIFIER_PROMPT = """
+You classify user voice responses during a clothing check assistant interaction. The user has just heard a clothing condition report and responded verbally.
+
+Classify their response into exactly one of these intents:
+- yes: they want to wear the item (e.g. "yes", "sure", "ok", "fine", "that's fine", "looks good", "I'll wear it")
+- no: they do not want to wear it (e.g. "no", "nope", "I'll change", "let me change", "I won't wear it")
+- repeat: they want to hear the report again (e.g. "repeat", "say that again", "what did you say", "again")
+- already_know: they already know about the issue (e.g. "I know", "already know", "I saw it", "I know about that")
+- more_detail: they want more specific information about the same issue (e.g. "more detail", "tell me more", "where exactly", "how bad is it")
+- question: they are asking a new follow-up question about the garment that requires reasoning (anything that does not fit the above, including questions about visibility, context, whether to wear it to a specific place, whether a jacket would cover it, etc.)
+
+Reply with only the intent word. Nothing else.
 """.trimIndent()
 
 private val SINGLE_IMAGE_PROMPT = """
@@ -52,11 +71,11 @@ Rules you must follow without exception:
 - Use passive voice throughout: "a mark is visible" not "I can see a mark", "fading is apparent" not "I notice fading"
 - Describe stain location precisely: "near the lower left cuff", "along the right collar edge"
 - Assess fading based on the garment's current visible appearance — describe overall colour saturation and visible wear
-- If a trusted person's name and fade threshold are provided: their threshold is their personal standard — not a universal rule. Always refer to them by their actual name. Never call them "your trusted person", "the trusted person", or any label — only ever use the name given.
-  Frame all fading judgements in their voice, as though reporting their personal opinion about this specific garment:
-  - Fading clearly below their threshold → "[Name] would still consider this fine" or "this is well within [Name]'s standard for this type of garment"
-  - Fading at or near their threshold → "this is close to where [Name] marked similar items as borderline" or "[Name] rated this level of fading as borderline on comparable fabric"
-  - Fading clearly above their threshold → "this has passed the point where [Name] marked items as no longer acceptable" or "[Name] would consider this beyond their limit for this type of garment"
+- If a trusted person's name and fade threshold are provided: their threshold is a private number used only for your own internal comparison — never speak it aloud, in any form ("twenty percent", "20%", "a threshold of 20", "this is at 15 percent" are all forbidden). Always refer to them by their actual name. Never call them "your trusted person", "the trusted person", or any label — only ever use the name given.
+  Frame all fading judgements in their voice, as though reporting their personal opinion about this specific garment, using only these qualitative buckets:
+  - Fading clearly below their threshold → "[Name] would still consider this fine to wear" or "this is well within what [Name] would accept for this type of garment"
+  - Fading approaching their threshold → "[Name] might still consider this fine to wear, though it's getting close to what they'd call borderline"
+  - Fading at or beyond their threshold → "[Name] would consider this not wearable" or "this has passed the point where [Name] would still wear it"
 - If a trusted person's name is provided, reference them by name when describing stains as well
 - If no trusted person name is provided, do not mention any trusted person at all and do not invent or assume a name
 - If nothing is found, say: "No visible marks, stains, or fading were detected on this garment. Do you still want to wear it?"
@@ -99,6 +118,28 @@ class GeminiApiService {
         }
     }
 
+    suspend fun classifyIntent(
+        apiKey: String,
+        rawText: String,
+        currentResponse: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val userText = "User said: $rawText. Current report was: ${currentResponse.take(100)}."
+            val messages = JSONArray().apply {
+                put(systemMessage(INTENT_CLASSIFIER_PROMPT))
+                put(userMessageText(userText))
+            }
+            val body = JSONObject().apply {
+                put("model", MODEL)
+                put("messages", messages)
+                put("max_tokens", 10)
+            }
+            extractText(post(apiKey, body)).trim().lowercase()
+        }.also { result ->
+            result.onFailure { Log.e(TAG, "classifyIntent failed", it) }
+        }
+    }
+
     suspend fun requestMoreDetail(
         apiKey: String,
         base64Image: String,
@@ -115,7 +156,7 @@ class GeminiApiService {
                 userMessageWithImage(base64Image, caregiverName, fadeThreshold, null) to SINGLE_IMAGE_PROMPT
             }
             val messages = JSONArray().apply {
-                put(systemMessage(systemPrompt))
+                put(systemMessage(systemPrompt + FOLLOW_UP_RULES))
                 put(firstUserMsg)
                 // Replay full conversation history so every prior follow-up and answer
                 // is in context — without this, the second+ follow-up has no memory.
@@ -169,7 +210,7 @@ class GeminiApiService {
                 append(" Trusted person's name: $caregiverName.")
             }
             if (fadeThreshold != null) {
-                append(" Their personal fade threshold: $fadeThreshold%" +
+                append(" Their personal fade threshold for internal comparison only — never speak this number aloud: $fadeThreshold%" +
                     " (the point at which they first rated fading as borderline on comparable fabric).")
             }
             if (!reportedStains.isNullOrBlank()) {
@@ -199,7 +240,7 @@ class GeminiApiService {
                 append(" Trusted person's name: $caregiverName.")
             }
             if (fadeThreshold != null) {
-                append(" Their personal fade threshold: $fadeThreshold%" +
+                append(" Their personal fade threshold for internal comparison only — never speak this number aloud: $fadeThreshold%" +
                     " (the point at which they first rated fading as borderline on comparable fabric).")
             }
             if (!reportedStains.isNullOrBlank()) {
